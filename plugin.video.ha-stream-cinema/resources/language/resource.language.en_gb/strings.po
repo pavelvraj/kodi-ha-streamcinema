@@ -1,0 +1,7 @@
+msgctxt "#30000"
+msgid "HA Stream Cinema"
+msgstr "HA Stream Cinema"
+
+msgctxt "#30001"
+msgid "HA Stream Cinema API URL"
+msgstr "HA Stream Cinema API URL"

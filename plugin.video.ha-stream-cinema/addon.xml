@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.1.0" provider-name="pavelvraj">
+    <requires>
+        <import addon="xbmc.python" version="3.0.0"/>
+    </requires>
+    <extension point="xbmc.python.pluginsource" library="main.py">
+        <provides>video</provides>
+    </extension>
+    <extension point="xbmc.addon.metadata">
+        <summary lang="cs_CZ">Kodi klient pro HA Stream Cinema API</summary>
+        <summary lang="en_GB">Kodi client for HA Stream Cinema API</summary>
+        <description lang="cs_CZ">Jednoduchý Kodi doplněk pro procházení sbírky filmů a seriálů z HA Stream Cinema a spouštění uložených streamů.</description>
+        <description lang="en_GB">A small Kodi add-on for browsing HA Stream Cinema movies and TV shows and playing stored streams.</description>
+        <language>cs en</language>
+        <platform>all</platform>
+        <license>MIT</license>
+    </extension>
+</addon>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="repository.pavelvraj.kodi-ha-streamcinema" name="Pavel Vraj Kodi Add-ons" version="0.1.0" provider-name="pavelvraj">
+    <extension point="xbmc.addon.repository" name="Pavel Vraj Kodi Add-ons">
+        <info compressed="false">https://raw.githubusercontent.com/pavelvraj/kodi-ha-streamcinema/main/addons.xml</info>
+        <checksum>https://raw.githubusercontent.com/pavelvraj/kodi-ha-streamcinema/main/addons.xml.md5</checksum>
+        <datadir zip="true">https://raw.githubusercontent.com/pavelvraj/kodi-ha-streamcinema/main/zips/</datadir>
+    </extension>
+    <extension point="xbmc.addon.metadata">
+        <summary lang="cs_CZ">Repository pro HA Stream Cinema Kodi doplněk</summary>
+        <summary lang="en_GB">Repository for HA Stream Cinema Kodi add-on</summary>
+        <description lang="cs_CZ">Online repository pro instalaci a aktualizace Kodi doplňku HA Stream Cinema.</description>
+        <description lang="en_GB">Online repository for installing and updating the HA Stream Cinema Kodi add-on.</description>
+        <platform>all</platform>
+    </extension>
+</addon>
