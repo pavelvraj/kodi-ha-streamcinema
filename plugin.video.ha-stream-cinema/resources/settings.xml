@@ -1,14 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<settings version="1">
-    <section id="addon" label="30000" help="">
-        <category id="general" label="Obecné" help="">
-            <group id="1" label="URL Home Assistant s HASC aplikací">
-                <setting id="api_url" type="string" label="URL" help="">
-                    <level>0</level>
-                    <default>http://homeassistant.local:8765</default>
-                    <control type="edit" format="string"/>
-                </setting>
-            </group>
-        </category>
-    </section>
+<settings>
+    <category label="Obecné">
+        <setting type="lsep" label="URL Home Assistant s HASC aplikací"/>
+        <setting id="api_url" type="text" label="URL" default="http://homeassistant.local:8765"/>
+    </category>
 </settings>
