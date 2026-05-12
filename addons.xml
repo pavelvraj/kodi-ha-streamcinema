@@ -17,21 +17,4 @@
         <license>MIT</license>
     </extension>
 </addon>
-  <addon id="repository.pavelvraj.kodi-ha-streamcinema" name="Pavel Vraj Kodi Add-ons" version="0.1.2" provider-name="pavelvraj">
-    <extension point="xbmc.addon.repository" name="Pavel Vraj Kodi Add-ons">
-        <dir>
-            <info compressed="false">https://pavelvraj.github.io/kodi-ha-streamcinema/addons.xml</info>
-            <checksum>https://pavelvraj.github.io/kodi-ha-streamcinema/addons.xml.md5</checksum>
-            <datadir zip="true">https://pavelvraj.github.io/kodi-ha-streamcinema/zips/</datadir>
-            <hashes>false</hashes>
-        </dir>
-    </extension>
-    <extension point="xbmc.addon.metadata">
-        <summary lang="cs_CZ">Repository pro HA Stream Cinema Kodi doplněk</summary>
-        <summary lang="en_GB">Repository for HA Stream Cinema Kodi add-on</summary>
-        <description lang="cs_CZ">Online repository pro instalaci a aktualizace Kodi doplňku HA Stream Cinema.</description>
-        <description lang="en_GB">Online repository for installing and updating the HA Stream Cinema Kodi add-on.</description>
-        <platform>all</platform>
-    </extension>
-</addon>
 </addons>
