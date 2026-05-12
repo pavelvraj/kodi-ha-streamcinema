@@ -5,3 +5,15 @@ msgstr "HA Stream Cinema"
 msgctxt "#30001"
 msgid "HA Stream Cinema API URL"
 msgstr "URL HA Stream Cinema API"
+
+msgctxt "#30002"
+msgid "General"
+msgstr "Obecné"
+
+msgctxt "#30003"
+msgid "Home Assistant URL with HASC application"
+msgstr "URL Home Assistant s HASC aplikací"
+
+msgctxt "#30004"
+msgid "URL"
+msgstr "URL"

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <addons>
-  <addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.1.0" provider-name="pavelvraj">
+  <addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.1.1" provider-name="Pajan">
     <requires>
         <import addon="xbmc.python" version="3.0.0" />
     </requires>
@@ -15,6 +15,10 @@
         <language>cs en</language>
         <platform>all</platform>
         <license>MIT</license>
+        <assets>
+            <icon>resources/media/icon.png</icon>
+            <fanart>resources/media/fanart.jpg</fanart>
+        </assets>
     </extension>
 </addon>
 </addons>
