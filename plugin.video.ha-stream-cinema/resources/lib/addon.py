@@ -23,6 +23,7 @@ BASE_URL = None
 ACTION_DOWNLOAD = "Stáhnout"
 ACTION_PLAY = "Přehrát"
 ACTION_ASK = "Zeptat se"
+DOWNLOADS_FILE = "downloads.json"
 
 
 def run(argv):
@@ -36,6 +37,8 @@ def run(argv):
         {
             "root": show_root,
             "catalog": show_catalog,
+            "genres": show_genres,
+            "genre": show_genre_catalog,
             "search": search_catalog,
             "media": show_media,
             "season": show_season,
@@ -43,8 +46,14 @@ def run(argv):
             "streams": show_streams,
             "play": play_stream,
             "download": download_stream,
+            "downloads": show_downloads,
+            "cancel_download": cancel_download,
             "settings": open_settings,
         }.get(action, show_root)(params)
+    except DownloadCancelled as exc:
+        if str(exc):
+            notify("HA Stream Cinema", str(exc), xbmcgui.NOTIFICATION_INFO)
+        end_plugin_action()
     except ApiError as exc:
         notify("HA Stream Cinema", str(exc))
         xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
@@ -58,6 +67,8 @@ def run(argv):
 def show_root(params=None):
     add_folder("Filmy", plugin_url(action="catalog", media_type="movie"))
     add_folder("Serialy", plugin_url(action="catalog", media_type="tvshow"))
+    add_folder("Zanry", plugin_url(action="genres"))
+    add_folder("Prave stahovane soubory", plugin_url(action="downloads"))
     add_folder("Hledat ve sbirce", plugin_url(action="search"))
     add_folder("Nastaveni", plugin_url(action="settings"))
     end_directory("videos")
@@ -66,7 +77,10 @@ def show_root(params=None):
 def show_catalog(params):
     media_type = params.get("media_type", "all")
     query = params.get("q", "")
+    genre = params.get("genre", "")
     data = api_get("catalog", media_type=media_type, q=query).get("data", [])
+    if genre:
+        data = [media for media in data if genre in (media.get("genres") or [])]
 
     for media in data:
         add_media_item(media)
@@ -75,6 +89,24 @@ def show_catalog(params):
         add_folder("Zadna ulozena media", plugin_url())
 
     end_directory("videos")
+
+
+def show_genres(params=None):
+    data = api_get("catalog").get("data", [])
+    genres = sorted({genre for media in data for genre in (media.get("genres") or [])}, key=lambda value: value.lower())
+    for genre in genres:
+        count = sum(1 for media in data if genre in (media.get("genres") or []))
+        add_folder("%s (%s)" % (genre, count), plugin_url(action="genre", genre=genre))
+    if not genres:
+        add_folder("Zadne zanry", plugin_url())
+    end_directory("videos")
+
+
+def show_genre_catalog(params):
+    genre = params.get("genre", "")
+    if not genre:
+        raise ApiError("Zanr nebyl zadan.")
+    show_catalog({"media_type": "all", "genre": genre})
 
 
 def search_catalog(params=None):
@@ -165,10 +197,45 @@ def download_stream(params):
     ident = params.get("ident", "")
     title = params.get("title") or ident
     source_url = params.get("source_url") or ""
+    download_id = params.get("download_id") or make_download_id(ident, title)
     if not ident:
         raise ApiError("Stream nema identifikator.")
     stream_url = resolve_stream_url(ident, source_url)
-    download_url(stream_url, title)
+    download_url(stream_url, title, download_id)
+    end_plugin_action()
+
+
+def show_downloads(params=None):
+    downloads = active_downloads()
+    for item in sorted(downloads, key=lambda value: value.get("started") or 0, reverse=True):
+        label = "%s - %s%%" % (item.get("filename") or item.get("title") or "Stahovani", item.get("percent") or 0)
+        list_item = xbmcgui.ListItem(label=label)
+        list_item.setLabel2(download_details(item))
+        xbmcplugin.addDirectoryItem(
+            HANDLE,
+            plugin_url(action="cancel_download", download_id=item.get("id") or ""),
+            list_item,
+            isFolder=False,
+        )
+    if not downloads:
+        add_folder("Nic se prave nestahuje", plugin_url())
+    end_directory("files")
+
+
+def cancel_download(params):
+    download_id = params.get("download_id") or ""
+    downloads = read_downloads()
+    item = downloads.get(download_id)
+    if not item or item.get("status") not in ("downloading", "starting"):
+        notify("HA Stream Cinema", "Stahovani uz neni aktivni.", xbmcgui.NOTIFICATION_INFO)
+        end_plugin_action()
+        return
+    if xbmcgui.Dialog().yesno("Zrusit stahovani", item.get("filename") or item.get("title") or download_id):
+        item["cancel"] = True
+        item["status"] = "canceling"
+        downloads[download_id] = item
+        write_downloads(downloads)
+        notify("HA Stream Cinema", "Stahovani bude zruseno.", xbmcgui.NOTIFICATION_INFO)
     end_plugin_action()
 
 
@@ -305,18 +372,21 @@ def resolve_stream_url(ident, source_url=""):
 
 
 def queue_download(ident, title, source_url=""):
+    download_id = make_download_id(ident, title)
+    register_download(download_id, title, ident)
     xbmc.executebuiltin(
         "RunPlugin(%s)" % plugin_url(
             action="download",
             ident=ident,
             title=title,
             source_url=source_url,
+            download_id=download_id,
         )
     )
     notify("HA Stream Cinema", "Stahovani spusteno na pozadi.", xbmcgui.NOTIFICATION_INFO)
 
 
-def download_url(stream_url, title):
+def download_url(stream_url, title, download_id):
     folder = xbmcaddon.Addon().getSetting("download_folder") or ""
     if not folder:
         raise ApiError("V nastaveni doplnku vyber slozku pro stahovani.")
@@ -325,6 +395,17 @@ def download_url(stream_url, title):
 
     filename = safe_filename(title)
     target = unique_target(folder, filename)
+    update_download_state(
+        download_id,
+        title=title,
+        filename=filename,
+        target=target,
+        status="starting",
+        percent=0,
+        written=0,
+        total=0,
+        started=time.time(),
+    )
     progress = xbmcgui.DialogProgressBG()
     progress.create("HA Stream Cinema", "Pripravuji stahovani: %s" % filename)
     written = 0
@@ -332,36 +413,57 @@ def download_url(stream_url, title):
     started = time.time()
     out_file = None
     completed = False
+    canceled = False
+    last_progress_percent = None
     try:
         request = Request(stream_url, headers={"User-Agent": ADDON_ID})
         with urlopen(request, timeout=20) as response:
             total = int(response.headers.get("content-length") or 0)
             out_file = xbmcvfs.File(target, "wb")
+            update_download_state(download_id, status="downloading", total=total)
             while True:
-                if is_progress_canceled(progress):
-                    raise ApiError("Stahovani zruseno.")
+                if should_cancel_download(download_id):
+                    raise DownloadCancelled("Stahovani zruseno.")
                 chunk = response.read(1024 * 512)
                 if not chunk:
                     break
                 out_file.write(chunk)
                 written += len(chunk)
-                update_download_progress(progress, filename, written, total, started)
+                percent = download_percent(written, total)
+                update_download_state(download_id, percent=percent, written=written, total=total, status="downloading")
+                if should_report_progress(percent, last_progress_percent):
+                    update_download_progress(progress, filename, written, total, started)
+                    notify_download_progress(filename, percent, written, total)
+                    last_progress_percent = percent
         completed = True
+        update_download_state(download_id, percent=100, written=written, total=total, status="completed", completed=time.time())
     except HTTPError as exc:
+        update_download_state(download_id, status="error", error="HTTP %s" % exc.code)
         raise ApiError("Stazeni vratilo HTTP %s." % exc.code)
     except URLError as exc:
+        update_download_state(download_id, status="error", error=str(exc.reason))
         raise ApiError("Nelze stahnout stream: %s" % exc.reason)
+    except DownloadCancelled:
+        canceled = True
+        update_download_state(download_id, status="canceled", completed=time.time())
+        raise
     finally:
         if out_file:
             out_file.close()
         progress.close()
         if not completed and target and xbmcvfs.exists(target):
             xbmcvfs.delete(target)
+        if completed or canceled:
+            remove_download(download_id)
     notify("HA Stream Cinema", "Stazeno: %s" % filename, xbmcgui.NOTIFICATION_INFO)
 
 
+def download_percent(written, total):
+    return int(written * 100 / total) if total else 0
+
+
 def update_download_progress(progress, filename, written, total, started):
-    percent = int(written * 100 / total) if total else 0
+    percent = download_percent(written, total)
     elapsed = max(time.time() - started, 0.1)
     speed = written / elapsed
     if total:
@@ -374,8 +476,39 @@ def update_download_progress(progress, filename, written, total, started):
         progress.update(percent, message)
 
 
-def is_progress_canceled(progress):
-    return hasattr(progress, "iscanceled") and progress.iscanceled()
+def notify_download_progress(filename, percent, written, total):
+    step = download_notify_step()
+    if not step:
+        return
+    detail = "%s%%" % percent
+    if total:
+        detail = "%s - %s / %s" % (detail, format_size(written), format_size(total))
+    notify("HA Stream Cinema", "%s: %s" % (filename, detail), xbmcgui.NOTIFICATION_INFO, 2500)
+
+
+def should_report_progress(percent, last_percent):
+    step = download_notify_step()
+    if not step or percent <= 0:
+        return False
+    if last_percent is None:
+        return percent == 100 or percent >= step
+    return percent == 100 or (percent // step) > (last_percent // step)
+
+
+def download_notify_step():
+    value = xbmcaddon.Addon().getSetting("download_notify_step") or "20%"
+    if value == "Bez notifikace":
+        return 0
+    if value.isdigit():
+        options = [0, 1, 5, 10, 20, 25, 50, 100]
+        try:
+            return options[int(value)]
+        except (TypeError, ValueError, IndexError):
+            return 20
+    try:
+        return int(value.rstrip("%"))
+    except (TypeError, ValueError):
+        return 20
 
 
 def end_plugin_action():
@@ -409,6 +542,125 @@ def unique_target(folder, filename):
         if not xbmcvfs.exists(candidate):
             return candidate
     return target
+
+
+def make_download_id(ident, title):
+    seed = "%s-%s-%s" % (ident, title, int(time.time() * 1000))
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", seed)[-120:]
+
+
+def active_downloads():
+    downloads = read_downloads()
+    active = []
+    changed = False
+    for download_id, item in list(downloads.items()):
+        if item.get("status") in ("starting", "downloading", "canceling"):
+            active.append(item)
+        elif (time.time() - float(item.get("completed") or 0)) > 300:
+            downloads.pop(download_id, None)
+            changed = True
+    if changed:
+        write_downloads(downloads)
+    return active
+
+
+def register_download(download_id, title, ident):
+    update_download_state(
+        download_id,
+        id=download_id,
+        title=title,
+        filename=safe_filename(title),
+        ident=ident,
+        status="starting",
+        percent=0,
+        written=0,
+        total=0,
+        cancel=False,
+        started=time.time(),
+    )
+
+
+def update_download_state(download_id, **changes):
+    if not download_id:
+        return
+    downloads = read_downloads()
+    item = downloads.get(download_id) or {"id": download_id, "started": time.time()}
+    item.update(changes)
+    downloads[download_id] = item
+    write_downloads(downloads)
+
+
+def remove_download(download_id):
+    downloads = read_downloads()
+    if download_id in downloads:
+        downloads.pop(download_id, None)
+        write_downloads(downloads)
+
+
+def should_cancel_download(download_id):
+    return bool(read_downloads().get(download_id, {}).get("cancel"))
+
+
+def download_details(item):
+    parts = []
+    status = item.get("status") or "downloading"
+    if status == "canceling":
+        parts.append("rusim")
+    else:
+        parts.append(status)
+    written = format_size(item.get("written"))
+    total = format_size(item.get("total"))
+    if written and total:
+        parts.append("%s / %s" % (written, total))
+    elif written:
+        parts.append(written)
+    target = item.get("target")
+    if target:
+        parts.append(target)
+    return " | ".join(parts)
+
+
+def read_downloads():
+    path = downloads_path()
+    if not xbmcvfs.exists(path):
+        return {}
+    handle = None
+    try:
+        handle = xbmcvfs.File(path, "r")
+        payload = handle.read()
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8")
+        return json.loads(payload or "{}")
+    except Exception as exc:
+        xbmc.log("[%s] Cannot read downloads state: %s" % (ADDON_ID, exc), xbmc.LOGWARNING)
+        return {}
+    finally:
+        if handle:
+            handle.close()
+
+
+def write_downloads(downloads):
+    profile_dir()
+    handle = None
+    try:
+        handle = xbmcvfs.File(downloads_path(), "w")
+        handle.write(json.dumps(downloads, ensure_ascii=False))
+    except Exception as exc:
+        xbmc.log("[%s] Cannot write downloads state: %s" % (ADDON_ID, exc), xbmc.LOGWARNING)
+    finally:
+        if handle:
+            handle.close()
+
+
+def downloads_path():
+    return join_kodi_path(profile_dir(), DOWNLOADS_FILE)
+
+
+def profile_dir():
+    path = xbmcvfs.translatePath(ADDON.getAddonInfo("profile"))
+    if not xbmcvfs.exists(path):
+        xbmcvfs.mkdirs(path)
+    return path
 
 
 def add_folder(label, url, art=None, info=None):
@@ -771,4 +1023,8 @@ def notify(title, message, icon=xbmcgui.NOTIFICATION_ERROR, time_ms=5000):
 
 
 class ApiError(Exception):
+    pass
+
+
+class DownloadCancelled(Exception):
     pass
