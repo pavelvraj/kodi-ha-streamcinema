@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import ssl
 import sys
@@ -94,9 +95,7 @@ def show_media(params):
                 info=info_for_media(media),
             )
     else:
-        action = choose_and_handle_stream(media, media.get("streams") or [])
-        if action == ACTION_PLAY:
-            return
+        choose_and_handle_stream(media, media.get("streams") or [])
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
@@ -136,9 +135,7 @@ def show_episode(params):
     for stream in media.get("streams") or []:
         if as_int(stream.get("season")) == season_no and as_int(stream.get("episode")) == episode_no:
             streams.append(stream)
-    action = choose_and_handle_stream(media, streams, season=season_no, episode=episode_no)
-    if action == ACTION_PLAY:
-        return
+    choose_and_handle_stream(media, streams, season=season_no, episode=episode_no)
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
@@ -257,7 +254,7 @@ def choose_and_handle_stream(media, streams, season=None, episode=None):
         item.setProperty("IsPlayable", "true")
         item.setInfo("video", info_for_media(media, season=season, episode=episode, stream=stream))
         item.setArt(art_for_media(media))
-        xbmcplugin.setResolvedUrl(HANDLE, True, item)
+        xbmc.Player().play(stream_url, item)
         return ACTION_PLAY
 
 
@@ -267,15 +264,18 @@ def select_stream(media, streams):
     if not active_streams:
         notify("HA Stream Cinema", "Zadne aktivni streamy.")
         return None
-    labels = [stream_label(s) for s in active_streams]
-    index = xbmcgui.Dialog().select(media_title(media), labels)
+    items = [stream_dialog_item(s) for s in active_streams]
+    try:
+        index = xbmcgui.Dialog().select(media_title(media), items, useDetails=True)
+    except TypeError:
+        index = xbmcgui.Dialog().select(media_title(media), [stream_dialog_label(s) for s in active_streams])
     if index < 0:
         return None
     return active_streams[index]
 
 
 def selected_action():
-    value = ADDON.getSetting("default_action") or ACTION_ASK
+    value = xbmcaddon.Addon().getSetting("default_action") or ACTION_ASK
     if value in (ACTION_DOWNLOAD, ACTION_PLAY, ACTION_ASK):
         return value
     try:
@@ -304,7 +304,7 @@ def resolve_stream_url(ident, source_url=""):
 
 
 def download_url(stream_url, title):
-    folder = ADDON.getSetting("download_folder") or ""
+    folder = xbmcaddon.Addon().getSetting("download_folder") or ""
     if not folder:
         raise ApiError("V nastaveni doplnku vyber slozku pro stahovani.")
     if not xbmcvfs.exists(folder):
@@ -551,6 +551,104 @@ def stream_label(stream):
     if badges:
         parts.append("[%s]" % " | ".join(badges))
     return " ".join(parts)
+
+
+def stream_dialog_item(stream):
+    item = xbmcgui.ListItem(label=stream.get("filename") or stream_ident(stream))
+    item.setLabel2(stream_dialog_details(stream))
+    icon = stream_format_icon(stream)
+    if icon:
+        item.setArt({"icon": icon, "thumb": icon})
+    return item
+
+
+def stream_dialog_label(stream):
+    return "%s\n%s" % (stream.get("filename") or stream_ident(stream), stream_dialog_details(stream))
+
+
+def stream_dialog_details(stream):
+    parts = []
+    fmt = stream_format(stream)
+    if fmt:
+        parts.append(color_text(fmt, format_color(fmt)))
+    resolution = resolution_label(stream)
+    if resolution:
+        parts.append(resolution)
+    size = format_size(stream.get("size"))
+    if size:
+        parts.append(size)
+    duration = format_duration(stream.get("duration"))
+    if duration:
+        parts.append(duration)
+    if stream.get("provider"):
+        parts.append(color_text(stream.get("provider"), "FFB8C7D9"))
+    audio = languages_label(stream.get("audio"), "audio")
+    if audio:
+        parts.append(color_text(audio, "FF66D9EF"))
+    subtitles = languages_label(stream.get("subtitles"), "sub")
+    if subtitles:
+        parts.append(color_text(subtitles, "FFA6E22E"))
+    return "  ".join(parts)
+
+
+def stream_format(stream):
+    value = (stream.get("format") or "").strip()
+    if not value:
+        filename = stream.get("filename") or ""
+        _, ext = os.path.splitext(filename)
+        value = ext.lstrip(".")
+    return value.upper()
+
+
+def stream_format_icon(stream):
+    fmt = stream_format(stream).lower()
+    if not fmt:
+        fmt = "file"
+    known = {"avi", "mkv", "mp4", "webm", "m4v", "mov", "ts", "mpg", "mpeg"}
+    filename = "format_%s.png" % (fmt if fmt in known else "file")
+    return addon_asset("resources/media/%s" % filename)
+
+
+def addon_asset(path):
+    return join_kodi_path(ADDON.getAddonInfo("path"), path)
+
+
+def resolution_label(stream):
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except (TypeError, ValueError):
+        width = 0
+        height = 0
+    if not width and not height:
+        return ""
+    if height >= 2160 or width >= 3840:
+        return color_text("4K", "FFFFD866")
+    if height >= 1080:
+        return color_text("1080p", "FF66D9EF")
+    if height >= 720:
+        return color_text("720p", "FFA6E22E")
+    if height:
+        return color_text("%sp" % height, "FFFFA94D")
+    return color_text("%sx%s" % (width or "-", height or "-"), "FFFFA94D")
+
+
+def color_text(value, color):
+    return "[COLOR %s]%s[/COLOR]" % (color, value)
+
+
+def format_color(fmt):
+    return {
+        "MKV": "FF9B5DE5",
+        "MP4": "FF00BBF9",
+        "AVI": "FFFFA94D",
+        "WEBM": "FF00F5D4",
+        "M4V": "FF66D9EF",
+        "MOV": "FFFFD166",
+        "TS": "FFFF5C5C",
+        "MPG": "FFFF5C8A",
+        "MPEG": "FFFF5C8A",
+    }.get((fmt or "").upper(), "FFB8C7D9")
 
 
 def stream_sort_key(stream):

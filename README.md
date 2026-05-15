@@ -14,7 +14,7 @@ https://pavelvraj.github.io/kodi-ha-streamcinema/
 3. Zdroj pojmenuj treba `Kodi HA Stream Cinema`.
 4. Otevri `Add-ons` -> `Install from zip file`.
 5. Vyber zdroj `Kodi HA Stream Cinema`.
-6. Vyber `repository.pavelvraj.kodi-ha-streamcinema-0.1.4.zip`.
+6. Vyber `repository.pavelvraj.kodi-ha-streamcinema-0.1.5.zip`.
 7. Potom otevri `Install from repository` -> `Pajan's Kodi Add-ons` -> `Video add-ons` -> `HA Stream Cinema`.
 8. V nastaveni doplnku nastav URL HA Stream Cinema API, typicky:
 
@@ -32,4 +32,4 @@ Kodi nacita metadata z:
 https://pavelvraj.github.io/kodi-ha-streamcinema/addons.xml
 ```
 
-Pri zvyseni verze v `plugin.video.ha-stream-cinema/addon.xml`, pregenerovani ZIPu a `addons.xml.md5` Kodi nabidne aktualizaci automaticky.
+Pri zvyseni verze v `plugin.video.ha-stream-cinema/addon.xml`, pregenerovani ZIPu a `addons.xml.md5` Kodi nabidne aktualizaci automaticky. Zmeny je potreba publikovat i do vetve `gh-pages`, ze ktere Kodi metadata nacita.
