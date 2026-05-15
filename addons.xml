@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <addons>
-<addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.2.1" provider-name="Pajan">
+<addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.2.2" provider-name="Pajan">
     <requires>
         <import addon="xbmc.python" version="3.0.0"/>
     </requires>
@@ -22,12 +22,12 @@
     </extension>
 </addon>
 
-<addon id="repository.pavelvraj.kodi-ha-streamcinema" name="Pajan's Kodi Add-ons" version="0.1.5" provider-name="Pajan">
+<addon id="repository.pavelvraj.kodi-ha-streamcinema" name="Pajan's Kodi Add-ons" version="0.1.6" provider-name="Pajan">
     <extension point="xbmc.addon.repository" name="Pajan's Kodi Add-ons">
         <dir>
-            <info compressed="false">https://pavelvraj.github.io/kodi-ha-streamcinema/addons.xml</info>
-            <checksum>https://pavelvraj.github.io/kodi-ha-streamcinema/addons.xml.md5</checksum>
-            <datadir zip="true">https://pavelvraj.github.io/kodi-ha-streamcinema/zips/</datadir>
+            <info compressed="false">https://raw.githubusercontent.com/pavelvraj/kodi-ha-streamcinema/main/addons.xml</info>
+            <checksum>https://raw.githubusercontent.com/pavelvraj/kodi-ha-streamcinema/main/addons.xml.md5</checksum>
+            <datadir zip="true">https://raw.githubusercontent.com/pavelvraj/kodi-ha-streamcinema/main/zips/</datadir>
         </dir>
     </extension>
     <extension point="xbmc.addon.metadata">
