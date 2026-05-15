@@ -6,11 +6,14 @@ Jednoduchy Kodi klient pro aplikaci ve slozce `ha-app`.
 
 1. Slozku `plugin.video.ha-stream-cinema` zabal do ZIPu nebo ji zkopiruj do Kodi `addons`.
 2. V Kodi otevri nastaveni doplnku.
-3. Do `URL HA Stream Cinema API` zadej adresu API, typicky:
+3. Do `URL` zadej adresu Home Assistantu s HASC aplikaci, typicky:
 
 ```text
 http://IP_ADRESA_HOME_ASSISTANTU:8765
 ```
+
+Plugin automaticky pouzije cestu `/api`, takze muzes zadat i adresu koncici `/api`.
+V nastaveni lze zvolit vychozi akci pro streamy (`Stahnout`, `Prehrat`, `Zeptat se`) a slozku pro stahovani.
 
 Plugin pouziva tyto endpointy z HA aplikace:
 
@@ -18,4 +21,4 @@ Plugin pouziva tyto endpointy z HA aplikace:
 - `GET /api/media/{media_id}`
 - `GET /api/file_link/{provider}:{ident}`
 
-Filmy se oteviraji na seznam ulozenych streamu. Serialy se prochazi pres serie, dily a potom streamy.
+Filmy a dily serialu po otevreni rovnou nabidnou dialog s dostupnymi streamy a jejich parametry.

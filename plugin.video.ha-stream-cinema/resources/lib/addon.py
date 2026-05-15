@@ -1,5 +1,8 @@
 import json
+import re
+import ssl
 import sys
+import time
 from urllib.parse import parse_qsl, quote, urlencode, urljoin
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -8,12 +11,16 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
+import xbmcvfs
 
 
 ADDON = xbmcaddon.Addon()
 ADDON_ID = ADDON.getAddonInfo("id")
 HANDLE = None
 BASE_URL = None
+ACTION_DOWNLOAD = "Stáhnout"
+ACTION_PLAY = "Přehrát"
+ACTION_ASK = "Zeptat se"
 
 
 def run(argv):
@@ -33,6 +40,7 @@ def run(argv):
             "episode": show_episode,
             "streams": show_streams,
             "play": play_stream,
+            "download": download_stream,
             "settings": open_settings,
         }.get(action, show_root)(params)
     except ApiError as exc:
@@ -55,7 +63,7 @@ def show_root(params=None):
 def show_catalog(params):
     media_type = params.get("media_type", "all")
     query = params.get("q", "")
-    data = api_get("/api/catalog", media_type=media_type, q=query).get("data", [])
+    data = api_get("catalog", media_type=media_type, q=query).get("data", [])
 
     for media in data:
         add_media_item(media)
@@ -75,7 +83,7 @@ def search_catalog(params=None):
 
 
 def show_media(params):
-    media = api_get("/api/media/%s" % quote(params["media_id"], safe=""))
+    media = api_get("media/%s" % quote(params["media_id"], safe=""))
     if media.get("type") == "tvshow" and media.get("seasons"):
         for season in media.get("seasons") or []:
             season_no = season.get("season")
@@ -86,12 +94,14 @@ def show_media(params):
                 info=info_for_media(media),
             )
     else:
-        add_stream_items(media, media.get("streams") or [])
-    end_directory("tvshows" if media.get("type") == "tvshow" else "movies")
+        action = choose_and_handle_stream(media, media.get("streams") or [])
+        if action == ACTION_PLAY:
+            return
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def show_season(params):
-    media = api_get("/api/media/%s" % quote(params["media_id"], safe=""))
+    media = api_get("media/%s" % quote(params["media_id"], safe=""))
     season_no = as_int(params.get("season"))
     selected = None
     for season in media.get("seasons") or []:
@@ -119,19 +129,21 @@ def show_season(params):
 
 
 def show_episode(params):
-    media = api_get("/api/media/%s" % quote(params["media_id"], safe=""))
+    media = api_get("media/%s" % quote(params["media_id"], safe=""))
     season_no = as_int(params.get("season"))
     episode_no = as_int(params.get("episode"))
     streams = []
     for stream in media.get("streams") or []:
         if as_int(stream.get("season")) == season_no and as_int(stream.get("episode")) == episode_no:
             streams.append(stream)
-    add_stream_items(media, streams, season=season_no, episode=episode_no)
-    end_directory("episodes")
+    action = choose_and_handle_stream(media, streams, season=season_no, episode=episode_no)
+    if action == ACTION_PLAY:
+        return
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def show_streams(params):
-    media = api_get("/api/media/%s" % quote(params["media_id"], safe=""))
+    media = api_get("media/%s" % quote(params["media_id"], safe=""))
     add_stream_items(media, media.get("streams") or [])
     end_directory("movies")
 
@@ -143,18 +155,22 @@ def play_stream(params):
     if not ident:
         raise ApiError("Stream nema identifikator.")
 
-    response = api_get("/api/file_link/%s" % quote(ident, safe=""))
-    link = response.get("link")
-    if not link:
-        raise ApiError("Provider nevratil prehravaci link.")
-
-    stream_url = absolute_api_url(link)
-    if source_url and link.startswith("api/stream_proxy/"):
-        stream_url += ("&" if "?" in stream_url else "?") + urlencode({"url": source_url})
+    stream_url = resolve_stream_url(ident, source_url)
 
     item = xbmcgui.ListItem(label=title, path=stream_url)
     item.setProperty("IsPlayable", "true")
     xbmcplugin.setResolvedUrl(HANDLE, True, item)
+
+
+def download_stream(params):
+    ident = params.get("ident", "")
+    title = params.get("title") or ident
+    source_url = params.get("source_url") or ""
+    if not ident:
+        raise ApiError("Stream nema identifikator.")
+    stream_url = resolve_stream_url(ident, source_url)
+    download_url(stream_url, title)
+    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def open_settings(params=None):
@@ -170,7 +186,7 @@ def add_media_item(media):
     if stream_count:
         label = "%s (%s streamu)" % (title, stream_count)
 
-    action = "media" if media_type == "tvshow" else "streams"
+    action = "media"
     add_folder(
         label,
         plugin_url(action=action, media_id=media["_id"]),
@@ -190,6 +206,17 @@ def add_stream_items(media, streams, season=None, episode=None):
         item.setProperty("IsPlayable", "true")
         item.setInfo("video", info_for_media(media, season=season, episode=episode, stream=stream))
         item.setArt(art_for_media(media))
+        item.addContextMenuItems([
+            (
+                "Stahnout",
+                "RunPlugin(%s)" % plugin_url(
+                    action="download",
+                    ident=ident,
+                    title=stream.get("filename") or media_title(media),
+                    source_url=stream.get("stream_url") or "",
+                ),
+            )
+        ])
         xbmcplugin.addDirectoryItem(
             HANDLE,
             plugin_url(
@@ -204,6 +231,159 @@ def add_stream_items(media, streams, season=None, episode=None):
 
     if not active_streams:
         add_folder("Zadne aktivni streamy", plugin_url())
+
+
+def choose_and_handle_stream(media, streams, season=None, episode=None):
+    stream = select_stream(media, streams)
+    if not stream:
+        return None
+
+    action = selected_action()
+    if action == ACTION_ASK:
+        action = ask_action()
+    if not action:
+        return None
+
+    ident = stream_ident(stream)
+    title = stream.get("filename") or media_title(media)
+    source_url = stream.get("stream_url") or ""
+    if action == ACTION_DOWNLOAD:
+        stream_url = resolve_stream_url(ident, source_url)
+        download_url(stream_url, title)
+        return ACTION_DOWNLOAD
+    else:
+        stream_url = resolve_stream_url(ident, source_url)
+        item = xbmcgui.ListItem(label=title, path=stream_url)
+        item.setProperty("IsPlayable", "true")
+        item.setInfo("video", info_for_media(media, season=season, episode=episode, stream=stream))
+        item.setArt(art_for_media(media))
+        xbmcplugin.setResolvedUrl(HANDLE, True, item)
+        return ACTION_PLAY
+
+
+def select_stream(media, streams):
+    active_streams = [s for s in streams if s.get("status") != "pending_delete" and stream_ident(s)]
+    active_streams = sorted(active_streams, key=stream_sort_key, reverse=True)
+    if not active_streams:
+        notify("HA Stream Cinema", "Zadne aktivni streamy.")
+        return None
+    labels = [stream_label(s) for s in active_streams]
+    index = xbmcgui.Dialog().select(media_title(media), labels)
+    if index < 0:
+        return None
+    return active_streams[index]
+
+
+def selected_action():
+    value = ADDON.getSetting("default_action") or ACTION_ASK
+    if value in (ACTION_DOWNLOAD, ACTION_PLAY, ACTION_ASK):
+        return value
+    try:
+        return [ACTION_DOWNLOAD, ACTION_PLAY, ACTION_ASK][int(value)]
+    except (TypeError, ValueError, IndexError):
+        return ACTION_ASK
+
+
+def ask_action():
+    options = [ACTION_DOWNLOAD, ACTION_PLAY]
+    index = xbmcgui.Dialog().select("Akce se streamem", options)
+    if index < 0:
+        return None
+    return options[index]
+
+
+def resolve_stream_url(ident, source_url=""):
+    response = api_get("file_link/%s" % quote(ident, safe=""))
+    link = response.get("link")
+    if not link:
+        raise ApiError("Provider nevratil prehravaci link.")
+    stream_url = absolute_api_url(link)
+    if source_url and link.lstrip("/").startswith("api/stream_proxy/"):
+        stream_url += ("&" if "?" in stream_url else "?") + urlencode({"url": source_url})
+    return stream_url
+
+
+def download_url(stream_url, title):
+    folder = ADDON.getSetting("download_folder") or ""
+    if not folder:
+        raise ApiError("V nastaveni doplnku vyber slozku pro stahovani.")
+    if not xbmcvfs.exists(folder):
+        raise ApiError("Slozka pro stahovani neexistuje.")
+
+    filename = safe_filename(title)
+    target = unique_target(folder, filename)
+    progress = xbmcgui.DialogProgress()
+    progress.create("HA Stream Cinema", "Stahuji %s" % filename)
+    written = 0
+    total = 0
+    started = time.time()
+    out_file = None
+    completed = False
+    try:
+        request = Request(stream_url, headers={"User-Agent": ADDON_ID})
+        with urlopen(request, timeout=20) as response:
+            total = int(response.headers.get("content-length") or 0)
+            out_file = xbmcvfs.File(target, "wb")
+            while True:
+                if progress.iscanceled():
+                    raise ApiError("Stahovani zruseno.")
+                chunk = response.read(1024 * 512)
+                if not chunk:
+                    break
+                out_file.write(chunk)
+                written += len(chunk)
+                update_download_progress(progress, filename, written, total, started)
+        completed = True
+    except HTTPError as exc:
+        raise ApiError("Stazeni vratilo HTTP %s." % exc.code)
+    except URLError as exc:
+        raise ApiError("Nelze stahnout stream: %s" % exc.reason)
+    finally:
+        if out_file:
+            out_file.close()
+        progress.close()
+        if not completed and target and xbmcvfs.exists(target):
+            xbmcvfs.delete(target)
+    notify("HA Stream Cinema", "Stazeno: %s" % filename, xbmcgui.NOTIFICATION_INFO)
+
+
+def update_download_progress(progress, filename, written, total, started):
+    percent = int(written * 100 / total) if total else 0
+    elapsed = max(time.time() - started, 0.1)
+    speed = written / elapsed
+    if total:
+        message = "%s / %s, %s/s" % (format_size(written), format_size(total), format_size(speed))
+    else:
+        message = "%s, %s/s" % (format_size(written), format_size(speed))
+    progress.update(percent, filename, message)
+
+
+def safe_filename(title):
+    name = re.sub(r"[\\/:*?\"<>|]+", "_", title or "stream").strip(" ._")
+    if not name:
+        name = "stream"
+    if not re.search(r"\.(avi|mkv|mp4|mpg|mpeg|ts|m4v)$", name, re.I):
+        name += ".mkv"
+    return name
+
+
+def join_kodi_path(folder, filename):
+    separator = "" if folder.endswith(("/", "\\")) else "/"
+    return folder + separator + filename
+
+
+def unique_target(folder, filename):
+    target = join_kodi_path(folder, filename)
+    if not xbmcvfs.exists(target):
+        return target
+    dot = filename.rfind(".")
+    base = filename[:dot] if dot > 0 else filename
+    ext = filename[dot:] if dot > 0 else ""
+    for index in range(1, 1000):
+        candidate = join_kodi_path(folder, "%s (%s)%s" % (base, index, ext))
+        if not xbmcvfs.exists(candidate):
+            return candidate
+    return target
 
 
 def add_folder(label, url, art=None, info=None):
@@ -233,25 +413,42 @@ def api_get(path, **params):
         if clean_params:
             api_url += ("&" if "?" in api_url else "?") + urlencode(clean_params)
 
-    request = Request(api_url, headers={"Accept": "application/json", "User-Agent": ADDON_ID})
     try:
-        with urlopen(request, timeout=20) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            payload = response.read().decode(charset)
-            return json.loads(payload) if payload else {}
+        return fetch_json(api_url)
     except HTTPError as exc:
         raise ApiError("API vratilo HTTP %s." % exc.code)
     except URLError as exc:
+        fallback_url = http_fallback_url(api_url, exc)
+        if fallback_url:
+            try:
+                return fetch_json(fallback_url)
+            except HTTPError as fallback_exc:
+                raise ApiError("API vratilo HTTP %s." % fallback_exc.code)
+            except URLError:
+                pass
         raise ApiError("Nelze se pripojit k API: %s" % exc.reason)
     except ValueError:
         raise ApiError("API nevratilo platny JSON.")
 
 
+def fetch_json(api_url):
+    xbmc.log("[%s] API GET %s" % (ADDON_ID, api_url), xbmc.LOGDEBUG)
+    request = Request(api_url, headers={"Accept": "application/json", "User-Agent": ADDON_ID})
+    with urlopen(request, timeout=20) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        payload = response.read().decode(charset)
+        return json.loads(payload) if payload else {}
+
+
 def absolute_api_url(path):
-    base = configured_api_url()
     if path.startswith("http://") or path.startswith("https://"):
         return path
-    return urljoin(base + "/", path.lstrip("/"))
+    clean_path = path.lstrip("/")
+    if clean_path == "api":
+        clean_path = ""
+    elif clean_path.startswith("api/"):
+        clean_path = clean_path[4:]
+    return urljoin(configured_api_url() + "/", clean_path)
 
 
 def configured_api_url():
@@ -260,7 +457,24 @@ def configured_api_url():
         raise ApiError("V nastaveni doplnku vypln URL HA Stream Cinema API.")
     if not value.startswith(("http://", "https://")):
         value = "http://" + value
+    if not value.rstrip("/").endswith("/api"):
+        value = value.rstrip("/") + "/api"
     return value
+
+
+def http_fallback_url(api_url, exc):
+    reason = getattr(exc, "reason", None)
+    if api_url.startswith("https://") and is_wrong_ssl_version(reason):
+        fallback = "http://" + api_url[len("https://"):]
+        xbmc.log("[%s] HTTPS failed with WRONG_VERSION_NUMBER, retrying %s" % (ADDON_ID, fallback), xbmc.LOGWARNING)
+        return fallback
+    return None
+
+
+def is_wrong_ssl_version(reason):
+    if isinstance(reason, ssl.SSLError):
+        return "WRONG_VERSION_NUMBER" in str(reason)
+    return "WRONG_VERSION_NUMBER" in str(reason or "")
 
 
 def media_title(media):
@@ -325,6 +539,15 @@ def stream_label(stream):
     size = format_size(stream.get("size"))
     if size:
         badges.append(size)
+    duration = format_duration(stream.get("duration"))
+    if duration:
+        badges.append(duration)
+    audio = languages_label(stream.get("audio"), "audio")
+    if audio:
+        badges.append(audio)
+    subtitles = languages_label(stream.get("subtitles"), "sub")
+    if subtitles:
+        badges.append(subtitles)
     if badges:
         parts.append("[%s]" % " | ".join(badges))
     return " ".join(parts)
@@ -358,6 +581,59 @@ def format_size(value):
         size /= 1024.0
         unit += 1
     return "%.1f %s" % (size, units[unit])
+
+
+def format_duration(value):
+    try:
+        seconds = int(float(value or 0))
+    except (TypeError, ValueError):
+        return ""
+    if seconds <= 0:
+        return ""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    if hours:
+        return "%d:%02d h" % (hours, minutes)
+    return "%d min" % minutes
+
+
+def languages_label(value, prefix):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        values = [value]
+    else:
+        values = value
+    languages = []
+    for item in values:
+        if isinstance(item, dict):
+            language = item.get("language") or item.get("lang") or item.get("name") or ""
+        else:
+            language = str(item)
+        language = short_language(language)
+        if language and language not in languages:
+            languages.append(language)
+    if not languages:
+        return ""
+    return "%s %s" % (prefix, "/".join(languages[:4]))
+
+
+def short_language(value):
+    clean = str(value or "").strip().lower()
+    if not clean:
+        return ""
+    mapping = {
+        "cze": "CZ",
+        "ces": "CZ",
+        "cs": "CZ",
+        "cz": "CZ",
+        "slo": "SK",
+        "slk": "SK",
+        "sk": "SK",
+        "eng": "EN",
+        "en": "EN",
+    }
+    return mapping.get(clean, clean[:3].upper())
 
 
 def as_int(value):
