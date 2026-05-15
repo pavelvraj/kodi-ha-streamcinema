@@ -766,8 +766,8 @@ def as_int(value):
         return None
 
 
-def notify(title, message):
-    xbmcgui.Dialog().notification(title, message, xbmcgui.NOTIFICATION_ERROR, 5000)
+def notify(title, message, icon=xbmcgui.NOTIFICATION_ERROR, time_ms=5000):
+    xbmcgui.Dialog().notification(title, message, icon, time_ms)
 
 
 class ApiError(Exception):
