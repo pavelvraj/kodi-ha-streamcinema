@@ -4,6 +4,7 @@ import re
 import ssl
 import sys
 import time
+import traceback
 from urllib.parse import parse_qsl, quote, urlencode, urljoin
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -49,6 +50,7 @@ def run(argv):
         xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
     except Exception as exc:
         xbmc.log("[%s] Unexpected error: %s" % (ADDON_ID, exc), xbmc.LOGERROR)
+        xbmc.log("[%s] %s" % (ADDON_ID, traceback.format_exc()), xbmc.LOGERROR)
         notify("HA Stream Cinema", "Neocekavana chyba doplnku.")
         xbmcplugin.endOfDirectory(HANDLE, succeeded=False, cacheToDisc=False)
 
@@ -167,7 +169,7 @@ def download_stream(params):
         raise ApiError("Stream nema identifikator.")
     stream_url = resolve_stream_url(ident, source_url)
     download_url(stream_url, title)
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    end_plugin_action()
 
 
 def open_settings(params=None):
@@ -245,8 +247,7 @@ def choose_and_handle_stream(media, streams, season=None, episode=None):
     title = stream.get("filename") or media_title(media)
     source_url = stream.get("stream_url") or ""
     if action == ACTION_DOWNLOAD:
-        stream_url = resolve_stream_url(ident, source_url)
-        download_url(stream_url, title)
+        queue_download(ident, title, source_url)
         return ACTION_DOWNLOAD
     else:
         stream_url = resolve_stream_url(ident, source_url)
@@ -303,6 +304,18 @@ def resolve_stream_url(ident, source_url=""):
     return stream_url
 
 
+def queue_download(ident, title, source_url=""):
+    xbmc.executebuiltin(
+        "RunPlugin(%s)" % plugin_url(
+            action="download",
+            ident=ident,
+            title=title,
+            source_url=source_url,
+        )
+    )
+    notify("HA Stream Cinema", "Stahovani spusteno na pozadi.", xbmcgui.NOTIFICATION_INFO)
+
+
 def download_url(stream_url, title):
     folder = xbmcaddon.Addon().getSetting("download_folder") or ""
     if not folder:
@@ -312,8 +325,8 @@ def download_url(stream_url, title):
 
     filename = safe_filename(title)
     target = unique_target(folder, filename)
-    progress = xbmcgui.DialogProgress()
-    progress.create("HA Stream Cinema", "Stahuji %s" % filename)
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("HA Stream Cinema", "Pripravuji stahovani: %s" % filename)
     written = 0
     total = 0
     started = time.time()
@@ -325,7 +338,7 @@ def download_url(stream_url, title):
             total = int(response.headers.get("content-length") or 0)
             out_file = xbmcvfs.File(target, "wb")
             while True:
-                if progress.iscanceled():
+                if is_progress_canceled(progress):
                     raise ApiError("Stahovani zruseno.")
                 chunk = response.read(1024 * 512)
                 if not chunk:
@@ -352,10 +365,22 @@ def update_download_progress(progress, filename, written, total, started):
     elapsed = max(time.time() - started, 0.1)
     speed = written / elapsed
     if total:
-        message = "%s / %s, %s/s" % (format_size(written), format_size(total), format_size(speed))
+        message = "%s\n%s / %s, %s/s" % (filename, format_size(written), format_size(total), format_size(speed))
     else:
-        message = "%s, %s/s" % (format_size(written), format_size(speed))
-    progress.update(percent, filename, message)
+        message = "%s\n%s, %s/s" % (filename, format_size(written), format_size(speed))
+    try:
+        progress.update(percent, "HA Stream Cinema", message)
+    except TypeError:
+        progress.update(percent, message)
+
+
+def is_progress_canceled(progress):
+    return hasattr(progress, "iscanceled") and progress.iscanceled()
+
+
+def end_plugin_action():
+    if HANDLE >= 0:
+        xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
 def safe_filename(title):
