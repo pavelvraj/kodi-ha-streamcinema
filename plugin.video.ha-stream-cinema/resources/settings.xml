@@ -4,7 +4,7 @@
         <setting type="lsep" label="URL Home Assistant s HASC aplikací"/>
         <setting id="api_url" type="text" label="URL" default="http://homeassistant.local:8765"/>
         <setting type="lsep" label="Přehrávání a stahování"/>
-        <setting id="default_action" type="select" label="Výchozí akce" values="Stáhnout|Přehrát|Zeptat se" default="Zeptat se"/>
+        <setting id="default_action" type="select" label="Výchozí akce" values="Stáhnout|Shlédnout|Zeptat se" default="Zeptat se"/>
         <setting id="download_folder" type="folder" label="Složka pro stahování" default=""/>
         <setting id="download_notify_step" type="select" label="Notifikace průběhu stahování" values="Bez notifikace|1%|5%|10%|20%|25%|50%|100%" default="20%"/>
     </category>

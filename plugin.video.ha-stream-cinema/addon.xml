@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.2.5" provider-name="Pajan">
+<addon id="plugin.video.ha-stream-cinema" name="HA Stream Cinema" version="0.2.6" provider-name="Pajan">
     <requires>
         <import addon="xbmc.python" version="3.0.0"/>
     </requires>

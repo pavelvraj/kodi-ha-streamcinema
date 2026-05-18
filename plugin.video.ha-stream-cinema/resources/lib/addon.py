@@ -21,9 +21,12 @@ ADDON_ID = ADDON.getAddonInfo("id")
 HANDLE = None
 BASE_URL = None
 ACTION_DOWNLOAD = "Stáhnout"
-ACTION_PLAY = "Přehrát"
+ACTION_PLAY = "Shlédnout"
 ACTION_ASK = "Zeptat se"
 DOWNLOADS_FILE = "downloads.json"
+PROGRESS_FILE = "progress.json"
+WATCHED_RESERVE_SECONDS = 600
+WATCHED_RATIO = 0.9
 
 
 def run(argv):
@@ -48,6 +51,8 @@ def run(argv):
             "download": download_stream,
             "downloads": show_downloads,
             "cancel_download": cancel_download,
+            "mark_watched": mark_watched,
+            "mark_unwatched": mark_unwatched,
             "settings": open_settings,
         }.get(action, show_root)(params)
     except DownloadCancelled as exc:
@@ -70,7 +75,7 @@ def show_root(params=None):
     add_folder("Zanry", plugin_url(action="genres"))
     add_folder("Prave stahovane soubory", plugin_url(action="downloads"))
     add_folder("Hledat ve sbirce", plugin_url(action="search"))
-    add_folder("Nastaveni", plugin_url(action="settings"))
+    add_action_item("Nastaveni", plugin_url(action="settings"))
     end_directory("videos")
 
 
@@ -128,9 +133,10 @@ def show_media(params):
                 art=art_for_media(media),
                 info=info_for_media(media),
             )
+        end_directory("tvshows")
     else:
-        choose_and_handle_stream(media, media.get("streams") or [])
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+        choose_and_handle_stream(media, media.get("streams") or [], key=playback_key(media))
+        end_plugin_action()
 
 
 def show_season(params):
@@ -147,7 +153,10 @@ def show_season(params):
 
     for episode in selected.get("episodes") or []:
         episode_no = episode.get("episode")
-        add_folder(
+        episode_key = playback_key(media, season_no, episode_no)
+        info = info_for_media(media, episode=episode_no, season=season_no)
+        apply_playback_info(info, episode_key)
+        add_action_item(
             "Dil %s" % episode_no,
             plugin_url(
                 action="episode",
@@ -156,7 +165,9 @@ def show_season(params):
                 episode=episode_no,
             ),
             art=art_for_media(media),
-            info=info_for_media(media, episode=episode_no, season=season_no),
+            info=info,
+            properties=playback_properties(episode_key),
+            context_menu=watch_context_menu(episode_key),
         )
     end_directory("episodes")
 
@@ -169,8 +180,8 @@ def show_episode(params):
     for stream in media.get("streams") or []:
         if as_int(stream.get("season")) == season_no and as_int(stream.get("episode")) == episode_no:
             streams.append(stream)
-    choose_and_handle_stream(media, streams, season=season_no, episode=episode_no)
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    choose_and_handle_stream(media, streams, season=season_no, episode=episode_no, key=playback_key(media, season_no, episode_no))
+    end_plugin_action()
 
 
 def show_streams(params):
@@ -241,7 +252,7 @@ def cancel_download(params):
 
 def open_settings(params=None):
     ADDON.openSettings()
-    xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
+    end_plugin_action()
 
 
 def add_media_item(media):
@@ -253,12 +264,16 @@ def add_media_item(media):
         label = "%s (%s streamu)" % (title, stream_count)
 
     action = "media"
-    add_folder(
-        label,
-        plugin_url(action=action, media_id=media["_id"]),
-        art=art_for_media(media),
-        info=info_for_media(media),
-    )
+    info = info_for_media(media)
+    kwargs = {"art": art_for_media(media), "info": info}
+    if media_type == "tvshow":
+        add_folder(label, plugin_url(action=action, media_id=media["_id"]), **kwargs)
+    else:
+        key = playback_key(media)
+        apply_playback_info(info, key)
+        kwargs["properties"] = playback_properties(key)
+        kwargs["context_menu"] = watch_context_menu(key)
+        add_action_item(label, plugin_url(action=action, media_id=media["_id"]), **kwargs)
 
 
 def add_stream_items(media, streams, season=None, episode=None):
@@ -299,15 +314,22 @@ def add_stream_items(media, streams, season=None, episode=None):
         add_folder("Zadne aktivni streamy", plugin_url())
 
 
-def choose_and_handle_stream(media, streams, season=None, episode=None):
-    stream = select_stream(media, streams)
-    if not stream:
-        return None
-
+def choose_and_handle_stream(media, streams, season=None, episode=None, key=None):
+    key = key or playback_key(media, season, episode)
     action = selected_action()
     if action == ACTION_ASK:
         action = ask_action()
     if not action:
+        return None
+
+    resume_time = 0
+    if action == ACTION_PLAY:
+        resume_time = choose_resume_time(key)
+        if resume_time is None:
+            return None
+
+    stream = select_stream(media, streams)
+    if not stream:
         return None
 
     ident = stream_ident(stream)
@@ -322,7 +344,7 @@ def choose_and_handle_stream(media, streams, season=None, episode=None):
         item.setProperty("IsPlayable", "true")
         item.setInfo("video", info_for_media(media, season=season, episode=episode, stream=stream))
         item.setArt(art_for_media(media))
-        xbmc.Player().play(stream_url, item)
+        play_with_tracking(stream_url, item, key, resume_time, stream.get("duration"))
         return ACTION_PLAY
 
 
@@ -346,6 +368,8 @@ def selected_action():
     value = xbmcaddon.Addon().getSetting("default_action") or ACTION_ASK
     if value in (ACTION_DOWNLOAD, ACTION_PLAY, ACTION_ASK):
         return value
+    if value == "Přehrát":
+        return ACTION_PLAY
     try:
         return [ACTION_DOWNLOAD, ACTION_PLAY, ACTION_ASK][int(value)]
     except (TypeError, ValueError, IndexError):
@@ -358,6 +382,57 @@ def ask_action():
     if index < 0:
         return None
     return options[index]
+
+
+def choose_resume_time(key):
+    state = playback_state(key)
+    resume_time = int(state.get("resume") or 0)
+    total = int(state.get("total") or 0)
+    if resume_time <= 60 or state.get("watched"):
+        return 0
+    label = "Pokracovat od %s" % format_time(resume_time)
+    index = xbmcgui.Dialog().select("Pokracovat v prehravani", [label, "Od zacatku"])
+    if index < 0:
+        return None
+    return resume_time if index == 0 else 0
+
+
+def play_with_tracking(stream_url, item, key, resume_time=0, duration=None):
+    player = xbmc.Player()
+    monitor = xbmc.Monitor()
+    player.play(stream_url, item)
+
+    started = False
+    for _ in range(60):
+        if monitor.abortRequested():
+            return
+        if player.isPlayingVideo():
+            started = True
+            break
+        if monitor.waitForAbort(0.25):
+            return
+
+    if not started:
+        return
+
+    if resume_time:
+        try:
+            player.seekTime(float(resume_time))
+        except Exception as exc:
+            xbmc.log("[%s] Cannot seek to resume point: %s" % (ADDON_ID, exc), xbmc.LOGWARNING)
+
+    last_time = float(resume_time or 0)
+    total_time = float(duration or 0)
+    while not monitor.abortRequested() and player.isPlayingVideo():
+        try:
+            last_time = player.getTime()
+            total_time = player.getTotalTime() or total_time
+        except RuntimeError:
+            break
+        if monitor.waitForAbort(1):
+            break
+
+    save_playback_position(key, last_time, total_time)
 
 
 def resolve_stream_url(ident, source_url=""):
@@ -663,13 +738,164 @@ def profile_dir():
     return path
 
 
-def add_folder(label, url, art=None, info=None):
+def mark_watched(params):
+    key = params.get("key") or ""
+    if key:
+        set_watched(key)
+        notify("HA Stream Cinema", "Oznaceno jako zhlednute.", xbmcgui.NOTIFICATION_INFO)
+    end_plugin_action()
+
+
+def mark_unwatched(params):
+    key = params.get("key") or ""
+    if key:
+        clear_playback_state(key)
+        notify("HA Stream Cinema", "Oznaceno jako nezhlednute.", xbmcgui.NOTIFICATION_INFO)
+    end_plugin_action()
+
+
+def watch_context_menu(key):
+    if not key:
+        return []
+    state = playback_state(key)
+    if state.get("watched"):
+        return [("Oznacit jako nezhlednute", "RunPlugin(%s)" % plugin_url(action="mark_unwatched", key=key))]
+    return [("Oznacit jako zhlednute", "RunPlugin(%s)" % plugin_url(action="mark_watched", key=key))]
+
+
+def playback_key(media, season=None, episode=None):
+    media_id = media.get("_id") or media.get("id") or media_title(media)
+    if season is not None and episode is not None:
+        return "episode:%s:%s:%s" % (media_id, season, episode)
+    return "media:%s" % media_id
+
+
+def playback_state(key):
+    return read_progress().get(key, {}) if key else {}
+
+
+def save_playback_position(key, position, total):
+    if not key:
+        return
+    position = int(position or 0)
+    total = int(total or 0)
+    if is_watched_position(position, total):
+        set_watched(key, total=total)
+    elif position > 60:
+        update_progress_state(key, watched=False, resume=position, total=total, updated=time.time())
+
+
+def is_watched_position(position, total):
+    if position <= 0:
+        return False
+    if total > 0:
+        return (total - position) <= WATCHED_RESERVE_SECONDS or (float(position) / float(total)) >= WATCHED_RATIO
+    return False
+
+
+def set_watched(key, total=0):
+    update_progress_state(key, watched=True, resume=0, total=int(total or playback_state(key).get("total") or 0), updated=time.time())
+
+
+def clear_playback_state(key):
+    progress = read_progress()
+    if key in progress:
+        progress.pop(key, None)
+        write_progress(progress)
+
+
+def update_progress_state(key, **changes):
+    progress = read_progress()
+    item = progress.get(key) or {}
+    item.update(changes)
+    progress[key] = item
+    write_progress(progress)
+
+
+def apply_playback_info(info, key):
+    state = playback_state(key)
+    if state.get("watched"):
+        info["playcount"] = 1
+    else:
+        info["playcount"] = 0
+
+
+def playback_properties(key):
+    state = playback_state(key)
+    if state.get("watched"):
+        return {}
+    resume = int(state.get("resume") or 0)
+    total = int(state.get("total") or 0)
+    if resume > 60:
+        properties = {"ResumeTime": str(resume)}
+        if total:
+            properties["TotalTime"] = str(total)
+        return properties
+    return {}
+
+
+def read_progress():
+    path = progress_path()
+    if not xbmcvfs.exists(path):
+        return {}
+    handle = None
+    try:
+        handle = xbmcvfs.File(path, "r")
+        payload = handle.read()
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8")
+        return json.loads(payload or "{}")
+    except Exception as exc:
+        xbmc.log("[%s] Cannot read playback state: %s" % (ADDON_ID, exc), xbmc.LOGWARNING)
+        return {}
+    finally:
+        if handle:
+            handle.close()
+
+
+def write_progress(progress):
+    profile_dir()
+    handle = None
+    try:
+        handle = xbmcvfs.File(progress_path(), "w")
+        handle.write(json.dumps(progress, ensure_ascii=False))
+    except Exception as exc:
+        xbmc.log("[%s] Cannot write playback state: %s" % (ADDON_ID, exc), xbmc.LOGWARNING)
+    finally:
+        if handle:
+            handle.close()
+
+
+def progress_path():
+    return join_kodi_path(profile_dir(), PROGRESS_FILE)
+
+
+def add_folder(label, url, art=None, info=None, context_menu=None, properties=None):
     item = xbmcgui.ListItem(label=label)
     if info:
         item.setInfo("video", info)
     if art:
         item.setArt(art)
+    if properties:
+        for key, value in properties.items():
+            item.setProperty(key, value)
+    if context_menu:
+        item.addContextMenuItems(context_menu)
     xbmcplugin.addDirectoryItem(HANDLE, url, item, isFolder=True)
+
+
+def add_action_item(label, url, art=None, info=None, context_menu=None, properties=None):
+    item = xbmcgui.ListItem(label=label)
+    if info:
+        item.setInfo("video", info)
+    if art:
+        item.setArt(art)
+    if properties:
+        for key, value in properties.items():
+            item.setProperty(key, value)
+    if context_menu:
+        item.addContextMenuItems(context_menu)
+    xbmcplugin.addDirectoryItem(HANDLE, url, item, isFolder=False)
 
 
 def end_directory(content):
@@ -970,6 +1196,16 @@ def format_duration(value):
     if hours:
         return "%d:%02d h" % (hours, minutes)
     return "%d min" % minutes
+
+
+def format_time(seconds):
+    seconds = int(seconds or 0)
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    if hours:
+        return "%d:%02d:%02d" % (hours, minutes, secs)
+    return "%d:%02d" % (minutes, secs)
 
 
 def languages_label(value, prefix):

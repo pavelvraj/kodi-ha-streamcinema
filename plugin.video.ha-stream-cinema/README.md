@@ -21,4 +21,4 @@ Plugin pouziva tyto endpointy z HA aplikace:
 - `GET /api/media/{media_id}`
 - `GET /api/file_link/{provider}:{ident}`
 
-Filmy a dily serialu po otevreni rovnou nabidnou dialog s dostupnymi streamy a jejich parametry. Katalog lze prochazet i podle zanru a prave bezici stahovani lze z doplnku zrusit.
+Filmy a dily serialu po otevreni nejprve pouziji vychozi akci, potom nabidnou dialog s dostupnymi streamy a jejich parametry. Doplněk si pamatuje rozkoukanou pozici, umozni pokracovat v prehravani a na urovni filmu nebo dilu lze polozku oznacit jako zhlednutou. Katalog lze prochazet i podle zanru a prave bezici stahovani lze z doplnku zrusit.
